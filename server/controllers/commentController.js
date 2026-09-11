@@ -3,6 +3,7 @@ const Task = require('../models/Task');
 const Project = require('../models/Project');
 const AppError = require('../utils/AppError');
 const catchAsync = require('../utils/catchAsync');
+const { logActivity, notify } = require('../utils/activityLog');
 
 // Middleware-like helper: verify access to the task via :taskId, attach req.task
 exports.loadTaskForComments = catchAsync(async (req, res, next) => {
@@ -51,6 +52,29 @@ exports.addComment = catchAsync(async (req, res, next) => {
     .get('io')
     .to(`project:${req.task.project}`)
     .emit('comment:created', { taskId: req.task._id, comment: populated });
+
+  const io = req.app.get('io');
+  await logActivity(io, {
+    project: req.task.project,
+    actor: req.user._id,
+    type: 'comment_added',
+    task: req.task._id,
+    meta: { title: req.task.title }
+  });
+
+  const notifyTargets = new Set(
+    [req.task.assignee, req.task.creator].filter(Boolean).map((id) => id.toString())
+  );
+  for (const userId of notifyTargets) {
+    await notify(io, {
+      user: userId,
+      actor: req.user._id,
+      type: 'comment_added',
+      message: `${req.user.name} commented on "${req.task.title}"`,
+      project: req.task.project,
+      task: req.task._id
+    });
+  }
 
   res.status(201).json({ success: true, comment: populated });
 });

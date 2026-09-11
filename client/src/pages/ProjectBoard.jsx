@@ -10,6 +10,7 @@ import TaskModal from '../components/tasks/TaskModal';
 import MemberModal from '../components/projects/MemberModal';
 import ProjectModal from '../components/projects/ProjectModal';
 import ConfirmationDialog from '../components/common/ConfirmationDialog';
+import ActivityFeed from '../components/projects/ActivityFeed';
 import UserAvatar from '../components/common/UserAvatar';
 import Button from '../components/common/Button';
 import LoadingSpinner from '../components/common/LoadingSpinner';
@@ -39,6 +40,8 @@ export default function ProjectBoard() {
   const [memberModalOpen, setMemberModalOpen] = useState(false);
   const [editProjectOpen, setEditProjectOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [tab, setTab] = useState('board');
+  const [removeMemberTarget, setRemoveMemberTarget] = useState(null);
 
   const loadProject = () => projectService.getOne(id).then((res) => setProject(res.project));
 
@@ -93,14 +96,17 @@ export default function ProjectBoard() {
   const handleTaskSaved = (task) => {
     setTasks((prev) => {
       const exists = prev.some((t) => t._id === task._id);
-      return exists ? prev.map((t) => (t._id === task._id ? task : t)) : [task, ...prev];
+      if (!exists) return [{ ...task, commentCount: task.commentCount ?? 0 }, ...prev];
+      return prev.map((t) =>
+        t._id === task._id ? { ...task, commentCount: task.commentCount ?? t.commentCount } : t
+      );
     });
   };
   const handleTaskDeleted = (taskId) => setTasks((prev) => prev.filter((t) => t._id !== taskId));
 
   useProjectSocket(id, {
-    onTaskCreated: (task) => setTasks((prev) => (prev.some((t) => t._id === task._id) ? prev : [task, ...prev])),
-    onTaskUpdated: (task) => setTasks((prev) => prev.map((t) => (t._id === task._id ? task : t))),
+    onTaskCreated: (task) => setTasks((prev) => (prev.some((t) => t._id === task._id) ? prev : [{ ...task, commentCount: 0 }, ...prev])),
+    onTaskUpdated: (task) => setTasks((prev) => prev.map((t) => (t._id === task._id ? { ...task, commentCount: t.commentCount } : t))),
     onTaskDeleted: ({ taskId }) => setTasks((prev) => prev.filter((t) => t._id !== taskId)),
     onProjectUpdated: (updated) => setProject(updated)
   });
@@ -109,6 +115,14 @@ export default function ProjectBoard() {
     await projectService.remove(id);
     push('Project deleted');
     navigate('/projects');
+  };
+
+  const handleRemoveMember = async () => {
+    if (!removeMemberTarget) return;
+    await projectService.removeMember(id, removeMemberTarget._id);
+    setProject((p) => ({ ...p, members: p.members.filter((m) => m._id !== removeMemberTarget._id) }));
+    push('Member removed');
+    setRemoveMemberTarget(null);
   };
 
   if (loading) return <LoadingSpinner size="lg" className="py-20" />;
@@ -157,6 +171,22 @@ export default function ProjectBoard() {
         </div>
       </div>
 
+      <div className="flex gap-1 border-b border-line">
+        {['board', 'members', 'activity'].map((t) => (
+          <button
+            key={t}
+            onClick={() => setTab(t)}
+            className={`px-3 py-2 text-sm font-medium capitalize transition-colors ${
+              tab === t ? 'border-b-2 border-brand text-brand-ink' : 'text-ink-soft hover:text-ink'
+            }`}
+          >
+            {t}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'board' && (
+        <>
       <div className="flex flex-wrap items-center gap-2">
         <input
           placeholder="Search tasks..."
@@ -212,6 +242,47 @@ export default function ProjectBoard() {
           />
         ))}
       </div>
+        </>
+      )}
+
+      {tab === 'members' && (
+        <div className="flex flex-col divide-y divide-line rounded-xl border border-line bg-surface">
+          {members.map((m) => {
+            const memberIsOwner = m._id === project.owner._id;
+            return (
+              <div key={m._id} className="flex items-center justify-between gap-3 px-4 py-3">
+                <div className="flex items-center gap-3">
+                  <UserAvatar user={m} />
+                  <div>
+                    <p className="text-sm font-medium text-ink">{m.name}</p>
+                    <p className="text-xs text-ink-soft">{m.email}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="rounded-md bg-canvas px-2 py-0.5 text-xs font-medium text-ink-soft">
+                    {memberIsOwner ? 'Owner' : 'Member'}
+                  </span>
+                  {isOwner && !memberIsOwner && (
+                    <button
+                      onClick={() => setRemoveMemberTarget(m)}
+                      className="text-xs font-medium text-danger hover:underline"
+                    >
+                      Remove
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+          <div className="px-4 py-3">
+            <Button variant="secondary" onClick={() => setMemberModalOpen(true)}>
+              Add member
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {tab === 'activity' && <ActivityFeed projectId={id} />}
 
       <TaskModal
         open={taskModal.open}
@@ -246,6 +317,15 @@ export default function ProjectBoard() {
         title="Delete project"
         message="This permanently deletes the project and all its tasks."
         confirmLabel="Delete"
+      />
+
+      <ConfirmationDialog
+        open={Boolean(removeMemberTarget)}
+        onClose={() => setRemoveMemberTarget(null)}
+        onConfirm={handleRemoveMember}
+        title="Remove member"
+        message={`Remove ${removeMemberTarget?.name} from this project?`}
+        confirmLabel="Remove"
       />
     </div>
   );

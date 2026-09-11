@@ -1,5 +1,6 @@
 const Project = require('../models/Project');
 const Task = require('../models/Task');
+const Activity = require('../models/Activity');
 const catchAsync = require('../utils/catchAsync');
 
 // GET /api/dashboard
@@ -35,11 +36,12 @@ exports.getDashboard = catchAsync(async (req, res) => {
     { $group: { _id: '$priority', count: { $sum: 1 } } }
   ]);
 
-  const recentActivity = await Task.find({ project: { $in: projectIds } })
-    .sort({ updatedAt: -1 })
+  const recentActivity = await Activity.find({ project: { $in: projectIds } })
+    .sort({ createdAt: -1 })
     .limit(10)
-    .populate('project', 'title')
-    .populate('assignee', 'name avatar');
+    .populate('actor', 'name avatar')
+    .populate('task', 'title')
+    .populate('project', 'title');
 
   res.status(200).json({
     success: true,

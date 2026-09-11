@@ -3,6 +3,7 @@ const Comment = require('../models/Comment');
 const Project = require('../models/Project');
 const AppError = require('../utils/AppError');
 const catchAsync = require('../utils/catchAsync');
+const { logActivity, notify } = require('../utils/activityLog');
 
 const populateTask = (query) =>
   query
@@ -34,7 +35,14 @@ exports.getTasksForProject = catchAsync(async (req, res) => {
     tasks = tasks.sort((a, b) => rank[a.priority] - rank[b.priority]);
   }
 
-  res.status(200).json({ success: true, count: tasks.length, tasks });
+  const counts = await Comment.aggregate([
+    { $match: { task: { $in: tasks.map((t) => t._id) } } },
+    { $group: { _id: '$task', count: { $sum: 1 } } }
+  ]);
+  const countMap = Object.fromEntries(counts.map((c) => [c._id.toString(), c.count]));
+  const withCounts = tasks.map((t) => ({ ...t.toObject(), commentCount: countMap[t._id.toString()] || 0 }));
+
+  res.status(200).json({ success: true, count: tasks.length, tasks: withCounts });
 });
 
 // POST /api/projects/:projectId/tasks
@@ -58,7 +66,27 @@ exports.createTask = catchAsync(async (req, res, next) => {
 
   const populated = await populateTask(Task.findById(task._id));
 
-  req.app.get('io').to(`project:${req.project._id}`).emit('task:created', populated);
+  const io = req.app.get('io');
+  io.to(`project:${req.project._id}`).emit('task:created', populated);
+
+  await logActivity(io, {
+    project: req.project._id,
+    actor: req.user._id,
+    type: 'task_created',
+    task: task._id,
+    meta: { title: task.title }
+  });
+
+  if (assignee) {
+    await notify(io, {
+      user: assignee,
+      actor: req.user._id,
+      type: 'task_assigned',
+      message: `${req.user.name} assigned you "${task.title}"`,
+      project: req.project._id,
+      task: task._id
+    });
+  }
 
   res.status(201).json({ success: true, task: populated });
 });
@@ -102,11 +130,66 @@ exports.updateTask = catchAsync(async (req, res) => {
     if (req.body[field] !== undefined) updates[field] = req.body[field];
   });
 
+  const before = req.task;
   const task = await populateTask(
     Task.findByIdAndUpdate(req.task._id, updates, { new: true, runValidators: true })
   );
 
-  req.app.get('io').to(`project:${req.project._id}`).emit('task:updated', task);
+  const io = req.app.get('io');
+  io.to(`project:${req.project._id}`).emit('task:updated', task);
+
+  if (updates.status !== undefined && updates.status !== before.status) {
+    await logActivity(io, {
+      project: req.project._id,
+      actor: req.user._id,
+      type: 'task_status_changed',
+      task: task._id,
+      meta: { title: task.title, from: before.status, to: updates.status }
+    });
+    if (task.assignee) {
+      await notify(io, {
+        user: task.assignee._id,
+        actor: req.user._id,
+        type: 'task_status_changed',
+        message: `"${task.title}" moved to ${updates.status.replace('_', ' ')}`,
+        project: req.project._id,
+        task: task._id
+      });
+    }
+  }
+
+  if (updates.priority !== undefined && updates.priority !== before.priority) {
+    await logActivity(io, {
+      project: req.project._id,
+      actor: req.user._id,
+      type: 'task_priority_changed',
+      task: task._id,
+      meta: { title: task.title, from: before.priority, to: updates.priority }
+    });
+  }
+
+  if (
+    updates.assignee !== undefined &&
+    String(updates.assignee || '') !== String(before.assignee || '')
+  ) {
+    await logActivity(io, {
+      project: req.project._id,
+      actor: req.user._id,
+      type: 'task_assigned',
+      task: task._id,
+      meta: { title: task.title }
+    });
+    if (updates.assignee) {
+      await notify(io, {
+        user: updates.assignee,
+        actor: req.user._id,
+        type: 'task_assigned',
+        message: `${req.user.name} assigned you "${task.title}"`,
+        project: req.project._id,
+        task: task._id
+      });
+    }
+  }
 
   res.status(200).json({ success: true, task });
 });
@@ -115,7 +198,17 @@ exports.updateTask = catchAsync(async (req, res) => {
 exports.deleteTask = catchAsync(async (req, res) => {
   await Comment.deleteMany({ task: req.task._id });
   const taskId = req.task._id;
+  const title = req.task.title;
   await req.task.deleteOne();
-  req.app.get('io').to(`project:${req.project._id}`).emit('task:deleted', { taskId });
+
+  const io = req.app.get('io');
+  io.to(`project:${req.project._id}`).emit('task:deleted', { taskId });
+  await logActivity(io, {
+    project: req.project._id,
+    actor: req.user._id,
+    type: 'task_deleted',
+    meta: { title }
+  });
+
   res.status(200).json({ success: true, message: 'Task deleted' });
 });

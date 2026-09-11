@@ -11,6 +11,7 @@ const {
 const { protect } = require('../middleware/auth');
 const { checkProjectAccess, requireProjectOwner } = require('../middleware/checkProjectAccess');
 const projectTaskRoutes = require('./projectTaskRoutes');
+const projectActivityRoutes = require('./projectActivityRoutes');
 
 const router = express.Router();
 
@@ -33,5 +34,6 @@ router
   .delete(checkProjectAccess, requireProjectOwner, removeMember);
 
 router.use('/:id/tasks', projectTaskRoutes);
+router.use('/:id/activity', projectActivityRoutes);
 
 module.exports = router;

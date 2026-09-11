@@ -21,12 +21,23 @@ export default function TaskCard({ task, onClick, onDragStart }) {
         <p className="font-medium text-ink">{task.title}</p>
         {task.assignee && <UserAvatar user={task.assignee} size="sm" />}
       </div>
+      {task.description && (
+        <p className="line-clamp-2 text-xs text-ink-soft">{task.description}</p>
+      )}
       <div className="flex items-center justify-between">
-        <span className={`rounded-md px-2 py-0.5 text-xs font-medium ${PRIORITY_STYLE[task.priority]}`}>
-          {task.priority}
-        </span>
+        <div className="flex items-center gap-2">
+          <span className={`rounded-md px-2 py-0.5 text-xs font-medium ${PRIORITY_STYLE[task.priority]}`}>
+            {task.priority}
+          </span>
+          {task.commentCount > 0 && (
+            <span className="flex items-center gap-1 text-xs text-ink-soft">
+              💬 {task.commentCount}
+            </span>
+          )}
+        </div>
         {task.dueDate && (
           <span className={`text-xs ${overdue ? 'font-semibold text-danger' : 'text-ink-soft'}`}>
+            {overdue ? 'Overdue ' : ''}
             {new Date(task.dueDate).toLocaleDateString()}
           </span>
         )}

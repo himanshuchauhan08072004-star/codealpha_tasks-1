@@ -3,6 +3,7 @@ const Task = require('../models/Task');
 const User = require('../models/User');
 const AppError = require('../utils/AppError');
 const catchAsync = require('../utils/catchAsync');
+const { logActivity, notify } = require('../utils/activityLog');
 
 // GET /api/projects  (projects the user owns or is a member of)
 exports.getProjects = catchAsync(async (req, res) => {
@@ -44,6 +45,12 @@ exports.createProject = catchAsync(async (req, res, next) => {
     { path: 'owner', select: 'name email avatar' },
     { path: 'members', select: 'name email avatar' }
   ]);
+
+  await logActivity(req.app.get('io'), {
+    project: project._id,
+    actor: req.user._id,
+    type: 'project_created'
+  });
 
   res.status(201).json({ success: true, project: populated });
 });
@@ -117,6 +124,21 @@ exports.addMember = catchAsync(async (req, res, next) => {
   ]);
 
   req.app.get('io').to(`project:${project._id}`).emit('project:updated', populated);
+
+  const io = req.app.get('io');
+  await logActivity(io, {
+    project: project._id,
+    actor: req.user._id,
+    type: 'member_added',
+    meta: { memberName: user.name }
+  });
+  await notify(io, {
+    user: userId,
+    actor: req.user._id,
+    type: 'member_added',
+    message: `${req.user.name} added you to "${project.title}"`,
+    project: project._id
+  });
 
   res.status(200).json({ success: true, project: populated });
 });
